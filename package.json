@@ -1,6 +1,6 @@
 {
   "name": "loopback-capture",
-  "version": "3.0.2",
+  "version": "3.0.0",
   "keywords": [
     "audio",
     "audio-capture",
@@ -64,6 +64,7 @@
         "types": "./dist/index.d.cts"
       }
     },
+    "./prebuilds/*/loopback_capture_addon.node": "./prebuilds/*/loopback_capture_addon.node",
     "./package.json": "./package.json"
   },
   "scripts": {
