@@ -31,6 +31,7 @@ const platformDirectory = `${operatingSystem}-${architecture}`;
 const addon: Addon = binding({
   bindings: "loopback_capture_addon.node",
   try: [
+    ["loopback-capture", "prebuilds", platformDirectory, "bindings"],
     ["module_root", "prebuilds", platformDirectory, "bindings"],
     ["module_root", "build", "Release", "bindings"],
   ],
