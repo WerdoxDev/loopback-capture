@@ -1,77 +1,93 @@
 {
-   "version": "2.0.0",
-   "name": "loopback-capture",
-   "author": {
-      "email": "matin.tat85@gmail.com",
-      "name": "Matin Tat",
-      "url": "https://github.com/WerdoxDev/loopback-capture"
-   },
-   "repository": {
-      "type": "git",
-      "url": "https://github.com/WerdoxDev/loopback-capture"
-   },
-   "license": "MIT",
-   "binary": {
-      "napi_versions": [
-         9
-      ]
-   },
-   "scripts": {
-      "compile": "cmake-js compile",
-      "clean": "cmake-js clean",
-      "build": "bun run compile && tsdown",
-      "prepublishOnly": "bun run build"
-   },
-   "devDependencies": {
-      "@types/bindings": "^1.5.5",
-      "@types/bun": "1.3.14",
-      "oxfmt": "^0.59.0",
-      "tsdown": "^0.22.1",
-      "typescript": "^7.0.2"
-   },
-   "type": "module",
-   "main": "dist/index.cjs",
-   "module": "dist/index.mjs",
-   "types": "dist/index.d.cts",
-   "exports": {
-      ".": {
-         "import": {
-            "default": "./dist/index.mjs",
-            "types": "./dist/index.d.mts"
-         },
-         "require": {
-            "default": "./dist/index.cjs",
-            "types": "./dist/index.d.cts"
-         }
+  "name": "loopback-capture",
+  "version": "3.0.0",
+  "keywords": [
+    "audio",
+    "audio-capture",
+    "child-process",
+    "linux",
+    "loopback",
+    "low-level",
+    "napi",
+    "native",
+    "nodejs",
+    "pcm",
+    "per-process",
+    "pipewire",
+    "sound",
+    "system-audio",
+    "wasapi",
+    "windows",
+    "windows-audio"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "Matin Tat",
+    "email": "matin.tat85@gmail.com",
+    "url": "https://github.com/WerdoxDev/loopback-capture"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WerdoxDev/loopback-capture"
+  },
+  "binary": {
+    "napi_versions": [
+      9
+    ]
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "os": [
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "dist",
+    "prebuilds",
+    "scripts/verify-prebuilds.mjs",
+    "CMakeLists.txt",
+    "src"
+  ],
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.cts",
+  "exports": {
+    ".": {
+      "import": {
+        "default": "./dist/index.mjs",
+        "types": "./dist/index.d.mts"
       },
-      "./package.json": "./package.json"
-   },
-   "files": [
-      "dist",
-      "build/Release/*.node",
-      "CMakeLists.txt",
-      "src"
-   ],
-   "keywords": [
-      "audio",
-      "audio-capture",
-      "system-audio",
-      "loopback",
-      "wasapi",
-      "windows",
-      "windows-audio",
-      "pcm",
-      "per-process",
-      "nodejs",
-      "native",
-      "sound",
-      "child-process",
-      "low-level",
-      "napi"
-   ],
-   "dependencies": {
-      "bindings": "^1.5.0",
-      "cmake-js": "^8.0.0",
-      "node-addon-api": "^8.9.0"
-   }
+      "require": {
+        "default": "./dist/index.cjs",
+        "types": "./dist/index.d.cts"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build:native": "cmake-js compile --CDCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "build:js": "tsdown",
+    "compile": "bun run build:native",
+    "clean": "cmake-js clean",
+    "build": "bun run build:native && bun run build:js",
+    "verify:prebuilds": "node scripts/verify-prebuilds.mjs",
+    "prepack": "tsdown && node scripts/verify-prebuilds.mjs"
+  },
+  "dependencies": {
+    "bindings": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/bindings": "^1.5.5",
+    "@types/bun": "1.3.14",
+    "cmake-js": "^8.0.0",
+    "node-addon-api": "^8.9.0",
+    "oxfmt": "^0.59.0",
+    "tsdown": "^0.22.1",
+    "typescript": "^7.0.2"
+  }
 }

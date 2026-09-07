@@ -8,9 +8,9 @@
 #include <guiddef.h>
 #include <mfapi.h>
 
-#include <wrl\implements.h>
-#include <wil\com.h>
-#include <wil\result.h>
+#include <wrl/implements.h>
+#include <wil/com.h>
+#include <wil/result.h>
 
 #include <napi.h>
 

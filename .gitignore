@@ -54,6 +54,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 x64/
 x86/
 build/
+prebuilds/
 bld/
 [Bb]in/
 [Oo]bj/

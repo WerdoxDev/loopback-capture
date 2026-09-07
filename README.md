@@ -1,59 +1,61 @@
-# 🎧 Application Audio Capture (Windows Only)
+# 🎧 Application Audio Capture
 
-N-API port of the WASAPI process-loopback sample to get a nodejs Buffer of an application's audio - or of the entire system's audio.
+A native N-API addon that delivers system or application audio as Node.js `Buffer` objects on Windows and Linux.
 
-> ⚠️ Requirements:
-> This package only runs on Windows 10 x64 and later. It uses native binaries and will warn on unsupported platforms.
+## Platform support
 
-### 🚀 Features
+| Feature | Windows 10 x64 2004+ | Linux with PipeWire |
+| --- | --- | --- |
+| System audio | WASAPI loopback | Default PipeWire output sink |
+| PID/process-tree audio | Yes | Best effort via PipeWire client/node metadata |
+| Output format | 16-bit PCM, stereo, 48 kHz | 16-bit PCM, stereo, 48 kHz |
 
-- Capture raw PCM audio from individual applications using WASAPI process-loopback.
-- Capture raw PCM audio from the entire system (whatever's playing through the default output device) - no process ID required.
-- Pipe real-time audio data into your JavaScript/TypeScript app.
+On Linux, `start()` finds playback nodes by correlating their `client.id` with PID metadata from PipeWire client objects. This is best effort: applications using the PulseAudio compatibility server may expose the compatibility server's PID rather than the application's PID.
 
-https://github.com/user-attachments/assets/fc058596-6ea3-4ded-8065-aeb642c5a465
+## Requirements
 
-### 📦 Installation
+- Node.js with N-API 9 support
+- CMake and a C++20 compiler when building from source
+- Windows: Windows SDK and MSVC
+- Linux: PipeWire 0.3 development files and `pkg-config`
 
-Install using your favorite package manager.
+Common Linux dependency packages:
+
+```sh
+# Debian / Ubuntu
+sudo apt install libpipewire-0.3-dev pkg-config
+
+# Fedora
+sudo dnf install pipewire-devel pkgconf-pkg-config
+
+# Arch Linux
+sudo pacman -S pipewire pkgconf
+```
+
+## Installation
 
 ```sh
 npm install loopback-capture
-#OR
-bun install loopback-capture
-#OR any package manager..
 ```
 
-### 🧠 Usage
+To build a checkout with Bun:
 
-1. Start Capturing Audio from a Single Process
+```sh
+bun install
+bun run build
+```
+
+## Capture system audio
+
+This API works on both Windows and Linux and captures the current default playback device.
 
 ```ts
 import loopback from "loopback-capture";
 
 const capture = new loopback.LoopbackCapture();
-const processId = capture.start(1234, /* includeProcessTree */ true, (chunk: Buffer) => {
-  console.log("Application audio data:", chunk); // Buffer
-});
 
-process.on("SIGINT", () => {
-  capture.stop();
-  process.exit(0);
-});
-```
-
-> 🧠 chunk is a raw PCM audio buffer. You can pipe it to a file, stream it, analyze it, etc.
-
-2. Start Capturing System-Wide Audio (no PID needed)
-
-Want everything the system is playing - not just one app? Use `startSystemAudio` instead. It skips process filtering entirely and captures straight from the default playback device.
-
-```ts
-import loopback from "loopback-capture";
-
-const capture = new loopback.LoopbackCapture();
 capture.startSystemAudio((chunk: Buffer) => {
-  console.log("System audio data:", chunk); // Buffer
+  console.log("System audio data:", chunk);
 });
 
 process.on("SIGINT", () => {
@@ -62,23 +64,55 @@ process.on("SIGINT", () => {
 });
 ```
 
-> 🧠 Same raw PCM format as process capture (16-bit, stereo, 48kHz) - just sourced from the whole desktop instead of one process tree.
+Each chunk contains interleaved signed 16-bit little-endian PCM with two channels at 48 kHz.
 
-### 🪟 Why and how?
+## Capture one process
 
-For my desktop application ([Huginn](https://github.com/WerdoxDev/Huginn)) I needed to capture an application's audio selectively to share in a call just like discord does. I later added full system audio capture too, for cases where selecting one process isn't the point - like recording the whole desktop for a meeting.
+```ts
+import loopback from "loopback-capture";
 
-The two modes use different Windows APIs under the hood:
+const capture = new loopback.LoopbackCapture();
 
-- **Per-process capture** uses `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK` (Windows 10 2004+), activated asynchronously via `ActivateAudioInterfaceAsync`, and can optionally include a process's child tree.
-- **System-wide capture** uses the classic WASAPI loopback-recording technique - grabbing the current default playback device via `IMMDeviceEnumerator` and activating an `IAudioClient` on it directly with `AUDCLNT_STREAMFLAGS_LOOPBACK` - the same approach tools like OBS use for desktop audio.
+capture.start(1234, true, (chunk: Buffer) => {
+  console.log("Application audio data:", chunk);
+});
 
-Most of the C++ source is simply a stripped out version from a sample in microsoft's classic samples repo
+process.on("SIGINT", () => {
+  capture.stop();
+  process.exit(0);
+});
+```
+
+Pass `true` to include descendant processes. On Windows, passing `false` selects WASAPI's exclude-target-process-tree mode; on Linux it captures only the specified PID.
+
+## Implementation
+
+Windows uses WASAPI. Per-process capture is built on `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`; system capture uses the default render endpoint with `AUDCLNT_STREAMFLAGS_LOOPBACK`.
+
+Linux system capture uses a PipeWire input stream with `stream.capture.sink=true`, which routes capture from the default output sink rather than from a microphone. Process capture discovers `Stream/Output/Audio` nodes and targets their object serial after matching node or owning-client PID metadata. The Linux and Windows native implementations live in separate `src/platform/linux` and `src/platform/windows` directories and CMake selects exactly one backend.
+
+The original Windows implementation is based on Microsoft's Windows classic samples:
 https://github.com/microsoft/Windows-classic-samples
 
-### 🧪 Example Use Cases
+## Example use cases
 
-- Build a real-time audio visualizer for specific apps.
-- Record browser or game audio selectively.
-- Stream audio from only one process instead of the whole system.
-- Record full desktop/system audio for meeting or screen recordings.
+- Record desktop/system audio.
+- Build a real-time audio visualizer.
+- Stream raw audio into an encoder or network transport.
+- Capture a selected application and its process tree.
+
+## Publishing
+
+The `Build and publish` GitHub Actions workflow builds x64 native addons on Linux and Windows,
+combines them into one npm package, and verifies that the packed package loads on both operating
+systems. Pull requests, pushes to `master`, and manual runs build and test without publishing.
+
+To publish a release:
+
+1. Update `version` in `package.json` and commit it.
+2. Create and publish a GitHub Release whose tag is exactly `v<version>` (for example, `v3.1.0`).
+3. The workflow publishes to npm after both platform smoke tests pass.
+
+Publishing uses npm trusted publishing, so the workflow does not need a long-lived npm token. In
+the package settings on npmjs.com, add a GitHub Actions trusted publisher for this repository with
+workflow filename `release.yml`, environment `npm`, and direct publishing enabled.

@@ -2,12 +2,14 @@ import binding from "bindings";
 import { arch, platform } from "node:os";
 
 export type LoopbackCapture = {
+  /** Capture a PID/process tree. Best effort on Linux because PipeWire PID metadata varies by client. */
   start: (
     processId: number,
     includeProcessTree: boolean,
     callback: (chunk: Buffer) => void,
   ) => void;
   stop: () => void;
+  /** Capture the default system output on Windows or Linux. */
   startSystemAudio: (callback: (chunk: Buffer) => void) => void;
 };
 
@@ -17,14 +19,20 @@ export type Addon = {
   };
 };
 
-if (platform() !== "win32" || arch() !== "x64") {
-  console.warn("This package is currently only available for Windows 10 x64 and later");
+const operatingSystem = platform();
+const architecture = arch();
+if (operatingSystem === "win32" && architecture !== "x64") {
+  console.warn("loopback-capture supports Windows on x64 only");
+} else if (operatingSystem !== "win32" && operatingSystem !== "linux") {
+  console.warn("loopback-capture supports Windows and Linux only");
 }
 
+const platformDirectory = `${operatingSystem}-${architecture}`;
 const addon: Addon = binding({
+  bindings: "loopback_capture_addon.node",
   try: [
-    ["module_root", "build", "Release", "loopback_capture_addon.node"],
-    ["loopback-capture", "build", "Release", "loopback_capture_addon.node"],
+    ["module_root", "prebuilds", platformDirectory, "bindings"],
+    ["module_root", "build", "Release", "bindings"],
   ],
 });
 
