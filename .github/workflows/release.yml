@@ -1,0 +1,162 @@
+name: Build and publish
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-native:
+    name: Build ${{ matrix.platform }}-x64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: win32
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libpipewire-0.3-dev pkg-config
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:native
+
+      - name: Upload native addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}-x64
+          path: build/Release/loopback_capture_addon.node
+          if-no-files-found: error
+
+  package:
+    name: Assemble npm package
+    needs: build-native
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Download Linux addon
+        uses: actions/download-artifact@v5
+        with:
+          name: native-linux-x64
+          path: prebuilds/linux-x64
+
+      - name: Download Windows addon
+        uses: actions/download-artifact@v5
+        with:
+          name: native-win32-x64
+          path: prebuilds/win32-x64
+
+      - name: Check release tag matches package version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          test "$RELEASE_TAG" = "v$PACKAGE_VERSION" || {
+            echo "Release tag $RELEASE_TAG does not match package version v$PACKAGE_VERSION"
+            exit 1
+          }
+
+      - run: pnpm run verify:prebuilds
+      - run: npm pack
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: loopback-capture-*.tgz
+          if-no-files-found: error
+
+  smoke-test:
+    name: Test package on ${{ matrix.platform }}-x64
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: win32
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install Linux runtime dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libpipewire-0.3-0
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: npm-package
+
+      - name: Install and load the packaged addon
+        shell: bash
+        run: |
+          mkdir smoke-test
+          cd smoke-test
+          npm init --yes
+          npm install ../loopback-capture-*.tgz
+          node -e "const addon = require('loopback-capture'); if (typeof addon.LoopbackCapture !== 'function') throw new Error('CommonJS addon load failed')"
+          node --input-type=module -e "import addon from 'loopback-capture'; if (typeof addon.LoopbackCapture !== 'function') throw new Error('ES module addon load failed')"
+
+  publish:
+    name: Publish to npm
+    if: github.event_name == 'release'
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: npm-package
+
+      - run: npm publish loopback-capture-*.tgz --access public
