@@ -1,6 +1,6 @@
 {
   "name": "loopback-capture",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "keywords": [
     "audio",
     "audio-capture",
@@ -35,22 +35,19 @@
       9
     ]
   },
-  "engines": {
-    "node": ">=18.17.0"
-  },
-  "os": [
-    "linux",
-    "win32"
-  ],
-  "cpu": [
-    "x64"
-  ],
   "files": [
     "dist",
     "prebuilds",
     "scripts/verify-prebuilds.mjs",
     "CMakeLists.txt",
     "src"
+  ],
+  "os": [
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64"
   ],
   "type": "module",
   "main": "dist/index.cjs",
@@ -89,5 +86,8 @@
     "oxfmt": "^0.59.0",
     "tsdown": "^0.22.1",
     "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=18.17.0"
   }
 }
