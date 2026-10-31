@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 
 #include <AudioClient.h>
 #include <mmdeviceapi.h>
@@ -38,16 +39,15 @@ public:
    // exactly one "thread" reference on it and releases that reference
    // itself once capture has fully finished (see OnFinishCapture).
 
-   // Captures audio rendered by a specific process (and optionally its
-   // child process tree), using the AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK
-   // virtual device (Windows 10 2004+).
-   HRESULT StartCaptureAsync(DWORD processId, bool includeProcessTree, Napi::ThreadSafeFunction tsfn);
+   // Captures audio rendered by a specific process and its child process
+   // tree using the process-loopback virtual device (Windows build 20348+).
+   HRESULT StartCaptureAsync(DWORD processId, Napi::ThreadSafeFunction tsfn);
 
    // Captures everything going out through the current default audio
-   // render (playback) device -- i.e. "all system audio", the same
-   // technique OBS/Discord-style loopback recorders use. No process
-   // filtering is applied.
-   HRESULT StartSystemCaptureAsync(Napi::ThreadSafeFunction tsfn);
+   // render (playback) device. If excludeProcessId is supplied, uses
+   // process loopback instead to capture across playback devices while
+   // excluding that process and its children (Windows build 20348+).
+   HRESULT StartSystemCaptureAsync(Napi::ThreadSafeFunction tsfn, std::optional<DWORD> excludeProcessId = std::nullopt);
 
    HRESULT StopCaptureAsync();
 
@@ -76,6 +76,7 @@ private:
    enum class CaptureMode
    {
       Process,
+      SystemExcludingProcess,
       System,
    };
 
@@ -93,7 +94,7 @@ private:
    // pulling samples.
    HRESULT StartCaptureCommon(Napi::ThreadSafeFunction tsfn);
 
-   // Process-specific loopback (existing behavior): asynchronous, goes
+   // Process-filtered loopback: asynchronous, goes
    // through ActivateAudioInterfaceAsync / ActivateCompleted.
    HRESULT ActivateProcessAudioInterface(DWORD processId, bool includeProcessTree);
 
@@ -138,10 +139,9 @@ private:
    wil::unique_event_nothrow m_hCaptureStopped;
 
    // Which activation path StartCaptureCommon should take, and the
-   // process-mode parameters (unused in System mode).
+   // target process (unused in System mode).
    CaptureMode m_captureMode = CaptureMode::Process;
    DWORD m_targetProcessId = 0;
-   bool m_includeProcessTree = false;
 
    // JS interop: the callback supplied by the JS caller, wrapped so it can
    // be invoked safely from the MF work-queue threads.

@@ -2,15 +2,11 @@ import binding from "bindings";
 import { arch, platform } from "node:os";
 
 export type LoopbackCapture = {
-  /** Capture a PID/process tree. Best effort on Linux because PipeWire PID metadata varies by client. */
-  start: (
-    processId: number,
-    includeProcessTree: boolean,
-    callback: (chunk: Buffer) => void,
-  ) => void;
+  /** Capture a process and all its descendants, including streams created after capture starts. Linux ownership detection is best effort. */
+  start(processId: number, callback: (chunk: Buffer) => void): void;
   stop: () => void;
-  /** Capture the default system output on Windows or Linux. */
-  startSystemAudio: (callback: (chunk: Buffer) => void) => void;
+  /** Capture the default system output, or pass excludeProcessId to mix playback streams outside that process tree across devices. Linux skips streams whose ownership cannot be determined. */
+  startSystemAudio: (callback: (chunk: Buffer) => void, excludeProcessId?: number) => void;
 };
 
 export type Addon = {

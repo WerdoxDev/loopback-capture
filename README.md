@@ -4,13 +4,14 @@ A native N-API addon that delivers system or application audio as Node.js `Buffe
 
 ## Platform support
 
-| Feature | Windows 10 x64 2004+ | Linux with PipeWire |
-| --- | --- | --- |
-| System audio | WASAPI loopback | Default PipeWire output sink |
-| PID/process-tree audio | Yes | Best effort via PipeWire client/node metadata |
-| Output format | 16-bit PCM, stereo, 48 kHz | 16-bit PCM, stereo, 48 kHz |
+| Feature                               | Windows x64                | Linux with PipeWire                           |
+| ------------------------------------- | -------------------------- | --------------------------------------------- |
+| System audio                          | WASAPI loopback            | Default PipeWire output sink                  |
+| System audio excluding a process tree | Yes, Windows build 20348+  | Yes, for streams with identifiable ownership  |
+| PID/process-tree audio                | Yes, Windows build 20348+  | Best effort via PipeWire client/node metadata |
+| Output format                         | 16-bit PCM, stereo, 48 kHz | 16-bit PCM, stereo, 48 kHz                    |
 
-On Linux, `start()` finds playback nodes by correlating their `client.id` with PID metadata from PipeWire client objects. This is best effort: applications using the PulseAudio compatibility server may expose the compatibility server's PID rather than the application's PID.
+On Linux, filtered capture continuously watches PipeWire playback streams and mixes all streams belonging to the selected process tree. It reads full node/client metadata, including originating PIDs for PulseAudio-compatible streams. Ownership detection is best effort; sandboxed applications or streams with missing PID metadata may not be identifiable.
 
 ## Requirements
 
@@ -66,14 +67,30 @@ process.on("SIGINT", () => {
 
 Each chunk contains interleaved signed 16-bit little-endian PCM with two channels at 48 kHz.
 
+### Exclude a process from system audio
+
+Pass `excludeProcessId` as the optional second argument to capture system audio except the specified process and all its descendants:
+
+```ts
+capture.startSystemAudio((chunk: Buffer) => {
+  console.log("System audio excluding this app:", chunk);
+}, process.pid);
+```
+
+This captures across playback devices: Windows uses WASAPI process loopback with `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`, and Linux mixes identifiable playback streams outside the excluded process tree. Linux skips streams whose owner cannot be resolved and reports them to stderr, rather than risking including the excluded application. Omitting `excludeProcessId` (or passing `undefined`) keeps the normal default-playback-device loopback behavior.
+
+On Windows, process capture and system capture with an exclusion require [build 20348 or later](https://learn.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ne-audioclientactivationparams-process_loopback_mode). Process IDs must be positive integers up to 4294967295 on Windows or 2147483647 on Linux. On Linux, the target/excluded process must exist and its `/proc/<pid>/stat` must be readable when capture starts.
+
 ## Capture one process
+
+Process capture always includes the specified process and its descendants on both platforms:
 
 ```ts
 import loopback from "loopback-capture";
 
 const capture = new loopback.LoopbackCapture();
 
-capture.start(1234, true, (chunk: Buffer) => {
+capture.start(1234, (chunk: Buffer) => {
   console.log("Application audio data:", chunk);
 });
 
@@ -83,13 +100,25 @@ process.on("SIGINT", () => {
 });
 ```
 
-Pass `true` to include descendant processes. On Windows, passing `false` selects WASAPI's exclude-target-process-tree mode; on Linux it captures only the specified PID.
+The `start()` signature has changed on both platforms: replace `start(pid, true, callback)` with `start(pid, callback)`. On Windows, replace `start(pid, false, callback)` with `startSystemAudio(callback, pid)`. Linux process capture now always includes descendants; its former PID-only mode has been removed.
+
+Linux capture can start before the target plays audio. It emits silence while no matching streams are available and adds/removes streams as playback changes. Children and grandchildren discovered later are included automatically. Known descendants stay associated after reparenting; PID start times prevent unrelated processes from being admitted through PID reuse. Capture remains active until `stop()`, including after the target exits. PipeWire disconnections trigger reconnection attempts; no audio is delivered while the server is unavailable.
 
 ## Implementation
 
-Windows uses WASAPI. Per-process capture is built on `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`; system capture uses the default render endpoint with `AUDCLNT_STREAMFLAGS_LOOPBACK`.
+Windows uses WASAPI with three capture modes:
 
-Linux system capture uses a PipeWire input stream with `stream.capture.sink=true`, which routes capture from the default output sink rather than from a microphone. Process capture discovers `Stream/Output/Audio` nodes and targets their object serial after matching node or owning-client PID metadata. The Linux and Windows native implementations live in separate `src/platform/linux` and `src/platform/windows` directories and CMake selects exactly one backend.
+| Call                              | Captured audio                                             | WASAPI activation                |
+| --------------------------------- | ---------------------------------------------------------- | -------------------------------- |
+| `start(pid, callback)`            | The process and its descendants                            | Process loopback, include tree   |
+| `startSystemAudio(callback, pid)` | All other processes, excluding the PID and its descendants | Process loopback, exclude tree   |
+| `startSystemAudio(callback)`      | All audio on the current default playback device           | Default render endpoint loopback |
+
+Linux system capture uses a PipeWire input stream with `stream.capture.sink=true`, which routes capture from the default output sink rather than from a microphone. Filtered capture keeps the registry listener active, binds full node/client information, and links selected `Stream/Output/Audio` ports to one capture stream. PipeWire mixes and resamples the streams on its graph; the addon downmixes mono/stereo/standard surround channels to stereo PCM16 with saturation. Existing application playback links are preserved. The JS audio queue is bounded to 64 chunks; slow callbacks can drop audio rather than growing memory without limit.
+
+Process matching relies on observable ancestry and metadata. Descendants that become detached before they can be observed, namespace-translated PIDs, and audio outside the accessible PipeWire graph remain limitations. The Linux and Windows native implementations live in separate `src/platform/linux` and `src/platform/windows` directories and CMake selects exactly one backend.
+
+Run `bun run test:linux` after building the addon to exercise live process capture against a private PipeWire/PulseAudio test server. The tests require `pipewire`, `pipewire-pulse`, `pw-cat`, and `pacat` (on Debian/Ubuntu: `pipewire pipewire-bin pipewire-pulse pulseaudio-utils`). They use temporary sockets and synthetic audio, without accessing your desktop audio server or physical devices.
 
 The original Windows implementation is based on Microsoft's Windows classic samples:
 https://github.com/microsoft/Windows-classic-samples

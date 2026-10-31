@@ -1,7 +1,34 @@
 #include "LoopbackCaptureWrap.h"
 #include "Utils.h"
 
+#include <cmath>
+#include <limits>
+
 using namespace Microsoft::WRL;
+
+namespace
+{
+   bool ReadProcessId(Napi::Value value, const char *name, DWORD &processId)
+   {
+      if (!value.IsNumber())
+      {
+         Napi::TypeError::New(value.Env(), std::string(name) + " must be a number")
+             .ThrowAsJavaScriptException();
+         return false;
+      }
+
+      const double number = value.As<Napi::Number>().DoubleValue();
+      if (!std::isfinite(number) || number < 1 || number > (std::numeric_limits<DWORD>::max)() || std::floor(number) != number)
+      {
+         Napi::RangeError::New(value.Env(), std::string(name) + " must be an integer between 1 and 4294967295")
+             .ThrowAsJavaScriptException();
+         return false;
+      }
+
+      processId = static_cast<DWORD>(number);
+      return true;
+   }
+}
 
 Napi::Object LoopbackCaptureWrap::Init(Napi::Env env, Napi::Object exports)
 {
@@ -63,17 +90,20 @@ Napi::Value LoopbackCaptureWrap::Start(const Napi::CallbackInfo &info)
 {
    Napi::Env env = info.Env();
 
-   if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsBoolean() || !info[2].IsFunction())
+   if (info.Length() != 2 || !info[1].IsFunction())
    {
       Napi::TypeError::New(env,
-                           "Expected start(processId: number, includeProcessTree: boolean, onData: (chunk: Buffer) => void)")
+                           "Expected start(processId: number, onData: (chunk: Buffer) => void)")
           .ThrowAsJavaScriptException();
       return env.Undefined();
    }
 
-   DWORD processId = static_cast<DWORD>(info[0].As<Napi::Number>().Uint32Value());
-   bool includeProcessTree = info[1].As<Napi::Boolean>().Value();
-   Napi::Function callback = info[2].As<Napi::Function>();
+   DWORD processId;
+   if (!ReadProcessId(info[0], "processId", processId))
+   {
+      return env.Undefined();
+   }
+   Napi::Function callback = info[1].As<Napi::Function>();
 
    Napi::ThreadSafeFunction tsfn;
    if (!PrepareStart(info, callback, tsfn))
@@ -81,7 +111,7 @@ Napi::Value LoopbackCaptureWrap::Start(const Napi::CallbackInfo &info)
       return env.Undefined();
    }
 
-   HRESULT hr = m_capture->StartCaptureAsync(processId, includeProcessTree, tsfn);
+   HRESULT hr = m_capture->StartCaptureAsync(processId, tsfn);
    if (FAILED(hr))
    {
       m_capture.Reset();
@@ -97,12 +127,23 @@ Napi::Value LoopbackCaptureWrap::StartSystemAudio(const Napi::CallbackInfo &info
 {
    Napi::Env env = info.Env();
 
-   if (info.Length() < 1 || !info[0].IsFunction())
+   if (info.Length() < 1 || info.Length() > 2 || !info[0].IsFunction())
    {
       Napi::TypeError::New(env,
-                           "Expected startSystemAudio(onData: (chunk: Buffer) => void)")
+                           "Expected startSystemAudio(onData: (chunk: Buffer) => void, excludeProcessId?: number)")
           .ThrowAsJavaScriptException();
       return env.Undefined();
+   }
+
+   std::optional<DWORD> excludeProcessId;
+   if (info.Length() == 2 && !info[1].IsUndefined())
+   {
+      DWORD processId;
+      if (!ReadProcessId(info[1], "excludeProcessId", processId))
+      {
+         return env.Undefined();
+      }
+      excludeProcessId = processId;
    }
 
    Napi::Function callback = info[0].As<Napi::Function>();
@@ -113,7 +154,7 @@ Napi::Value LoopbackCaptureWrap::StartSystemAudio(const Napi::CallbackInfo &info
       return env.Undefined();
    }
 
-   HRESULT hr = m_capture->StartSystemCaptureAsync(tsfn);
+   HRESULT hr = m_capture->StartSystemCaptureAsync(tsfn, excludeProcessId);
    if (FAILED(hr))
    {
       m_capture.Reset();

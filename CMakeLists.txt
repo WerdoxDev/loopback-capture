@@ -33,6 +33,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(PLATFORM_SOURCES
         ${PLATFORM_DIR}/LoopbackCapture.cpp
         ${PLATFORM_DIR}/LoopbackCaptureWrap.cpp
+        ${PLATFORM_DIR}/ProcessTree.cpp
     )
 else()
     message(FATAL_ERROR "loopback-capture supports Windows and Linux only")

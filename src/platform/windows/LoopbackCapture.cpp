@@ -204,18 +204,18 @@ HRESULT CLoopbackCapture::FinishAudioClientInitialization()
    return S_OK;
 }
 
-HRESULT CLoopbackCapture::StartCaptureAsync(DWORD processId, bool includeProcessTree, Napi::ThreadSafeFunction tsfn)
+HRESULT CLoopbackCapture::StartCaptureAsync(DWORD processId, Napi::ThreadSafeFunction tsfn)
 {
    m_captureMode = CaptureMode::Process;
    m_targetProcessId = processId;
-   m_includeProcessTree = includeProcessTree;
 
    return StartCaptureCommon(tsfn);
 }
 
-HRESULT CLoopbackCapture::StartSystemCaptureAsync(Napi::ThreadSafeFunction tsfn)
+HRESULT CLoopbackCapture::StartSystemCaptureAsync(Napi::ThreadSafeFunction tsfn, std::optional<DWORD> excludeProcessId)
 {
-   m_captureMode = CaptureMode::System;
+   m_captureMode = excludeProcessId.has_value() ? CaptureMode::SystemExcludingProcess : CaptureMode::System;
+   m_targetProcessId = excludeProcessId.value_or(0);
 
    return StartCaptureCommon(tsfn);
 }
@@ -240,13 +240,17 @@ HRESULT CLoopbackCapture::StartCaptureCommon(Napi::ThreadSafeFunction tsfn)
    {
       RETURN_IF_FAILED(InitializeLoopbackCapture());
 
-      if (m_captureMode == CaptureMode::Process)
+      switch (m_captureMode)
       {
-         RETURN_IF_FAILED(ActivateProcessAudioInterface(m_targetProcessId, m_includeProcessTree));
-      }
-      else
-      {
+      case CaptureMode::Process:
+         RETURN_IF_FAILED(ActivateProcessAudioInterface(m_targetProcessId, true));
+         break;
+      case CaptureMode::SystemExcludingProcess:
+         RETURN_IF_FAILED(ActivateProcessAudioInterface(m_targetProcessId, false));
+         break;
+      case CaptureMode::System:
          RETURN_IF_FAILED(ActivateSystemAudioInterface());
+         break;
       }
 
       // We should be in the initialzied state if this is the first time through getting ready to capture.

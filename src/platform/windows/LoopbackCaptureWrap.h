@@ -19,12 +19,13 @@ public:
    ~LoopbackCaptureWrap();
 
 private:
-   // JS: capture.start(processId: number, includeProcessTree: boolean, onData: (chunk: Buffer) => void): void
+   // JS: capture.start(processId: number, onData: (chunk: Buffer) => void): void
+   // Always includes the target process's children.
    Napi::Value Start(const Napi::CallbackInfo &info);
 
-   // JS: capture.startSystemAudio(onData: (chunk: Buffer) => void): void
-   // Captures everything going out through the current default playback
-   // device -- no process id needed.
+   // JS: capture.startSystemAudio(onData, excludeProcessId?: number): void
+   // Captures the default playback device, or uses process loopback to
+   // exclude a process and its children when excludeProcessId is supplied.
    Napi::Value StartSystemAudio(const Napi::CallbackInfo &info);
 
    // JS: capture.stop(): void

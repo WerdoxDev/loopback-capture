@@ -1,6 +1,6 @@
 {
   "name": "loopback-capture",
-  "version": "3.0.2",
+  "version": "4.0.0",
   "keywords": [
     "audio",
     "audio-capture",
@@ -70,6 +70,8 @@
   "scripts": {
     "build:native": "cmake-js compile --CDCMAKE_EXPORT_COMPILE_COMMANDS=ON",
     "build:js": "tsdown",
+    "test:windows": "node --test scripts/test-windows-api.mjs",
+    "test:linux": "node --test scripts/test-linux-api.mjs",
     "compile": "bun run build:native",
     "clean": "cmake-js clean",
     "build": "bun run build:native && bun run build:js",

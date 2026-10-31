@@ -36,12 +36,20 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install Linux build dependencies
+      - name: Install Linux build and test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libpipewire-0.3-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install --yes libpipewire-0.3-dev pkg-config pipewire pipewire-bin pipewire-pulse pulseaudio-utils
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build:native
+
+      - name: Check Linux audio capture
+        if: runner.os == 'Linux'
+        run: pnpm run test:linux
+
+      - name: Check Windows capture API validation
+        if: runner.os == 'Windows'
+        run: pnpm run test:windows
 
       - name: Upload native addon
         uses: actions/upload-artifact@v4
