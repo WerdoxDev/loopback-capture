@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, fork, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -156,9 +156,9 @@ test(
     await startDaemon();
     const { LoopbackCapture } = require("../build/Release/loopback_capture_addon.node");
     let request = 0;
-    async function controller() {
+    async function controller(extraEnv = {}) {
       const child = fork(new URL("./fixtures/linux-audio.mjs", import.meta.url), [], {
-        env,
+        env: { ...env, ...extraEnv },
         stdio: ["ignore", "ignore", "inherit", "ipc"],
       });
       processes.push(child);
@@ -176,7 +176,8 @@ test(
               if (message.request === id) {
                 clearTimeout(timer);
                 child.off("message", receive);
-                resolve(message);
+                if (message.error) reject(new Error(message.error));
+                else resolve(message);
               }
             }
             child.on("message", receive);
@@ -191,7 +192,22 @@ test(
       return value;
     }
 
-    await t.test("validates PIDs and rejects the old boolean signature", () => {
+    // These checks share live playback state. Stop on the first failure so a
+    // setup problem does not turn into unrelated spectrum timeouts.
+    async function step(name, callback) {
+      let failure;
+      await t.test(name, async () => {
+        try {
+          await callback();
+        } catch (error) {
+          failure = error;
+          throw error;
+        }
+      });
+      if (failure) throw failure;
+    }
+
+    await step("validates PIDs and rejects the old boolean signature", () => {
       const capture = new LoopbackCapture();
       assert.throws(() => capture.start(process.pid, true, () => {}), TypeError);
       assert.throws(() => capture.start(2147483647, () => {}), /Cannot read \/proc/);
@@ -215,21 +231,35 @@ test(
 
     const target = await controller(),
       outsider = await controller();
+    await step("reports playback startup errors directly", async () => {
+      const brokenBin = join(directory, "broken-player");
+      mkdirSync(brokenBin);
+      writeFileSync(
+        join(brokenBin, "pw-cat"),
+        "#!/bin/sh\necho 'unsupported playback option' >&2\nexit 2\n",
+        { mode: 0o755 },
+      );
+      const broken = await controller({ PATH: brokenBin });
+      await assert.rejects(
+        broken.send("play", { spec: { hz: 440 } }),
+        /pw-cat exited with code 2: unsupported playback option/,
+      );
+    });
     const selected = recording();
-    await t.test("starts before playback and emits silence", async () => {
+    await step("starts before playback and emits silence", async () => {
       selected.capture.start(target.pid, selected.onData);
       const audio = await selected.sample();
       assert.ok(audio.every((byte) => byte === 0));
       assert.throws(() => selected.capture.start(target.pid, selected.onData), /already started/);
     });
     let first;
-    await t.test("mixes late grandchildren and excludes unrelated streams", async () => {
+    await step("mixes late grandchildren and excludes unrelated streams", async () => {
       first = await target.send("play", { spec: { hz: 440 } });
       await target.send("play", { spec: { hz: 880 } });
       await outsider.send("play", { spec: { hz: 1760 } });
       await selected.expectTones([440, 880], [1760]);
     });
-    await t.test("removes closed streams and picks up replacements", async () => {
+    await step("removes closed streams and picks up replacements", async () => {
       await target.send("stop", { id: first.id });
       await selected.expectTones([880], [440, 1760]);
       await target.send("play", { spec: { hz: 660, rate: 44100, channels: ["MONO"] } });
@@ -238,7 +268,7 @@ test(
       assert.ok(amplitude(audio, 660, 1) > 1500, "mono resampled into both stereo channels");
     });
     const excluded = recording();
-    await t.test("preserves stereo separation and downmixes center audio", async () => {
+    await step("preserves stereo separation and downmixes center audio", async () => {
       const stereo = await target.send("play", { spec: { hz: [220, 330] } });
       const center = await target.send("play", { spec: { hz: 1540, channels: ["FC"] } });
       await selected.expectTones([220, 1540], [330]);
@@ -249,7 +279,7 @@ test(
       await target.send("stop", { id: stereo.id });
       await target.send("stop", { id: center.id });
     });
-    await t.test("saturates loud mixed audio instead of wrapping PCM16", async () => {
+    await step("saturates loud mixed audio instead of wrapping PCM16", async () => {
       const loud = await target.send("play", { spec: { dc: [1.5, -1.5] } });
       await waitFor(async () => {
         const audio = await selected.sample();
@@ -261,11 +291,11 @@ test(
       }, "loud PCM16 audio was not saturated");
       await target.send("stop", { id: loud.id });
     });
-    await t.test("system capture excludes the entire target process tree", async () => {
+    await step("system capture excludes the entire target process tree", async () => {
       excluded.capture.startSystemAudio(excluded.onData, target.pid);
       await excluded.expectTones([1760], [660, 880]);
     });
-    await t.test("identifies PulseAudio compatibility streams by originating PID", async () => {
+    await step("identifies PulseAudio compatibility streams by originating PID", async () => {
       const pulseConfig = `
 context.spa-libs = { audio.convert.* = audioconvert/libspa-audioconvert support.* = support/libspa-support }
 context.modules = [
@@ -328,7 +358,7 @@ stream.properties = { node.always-process = true adapter.auto-port-config = { mo
       await excluded.expectTones([1760], [660, 880, 1100]);
       await target.send("stop", { id: tone.id });
     });
-    await t.test("skips playback with unresolvable ownership during exclusion", async () => {
+    await step("skips playback with unresolvable ownership during exclusion", async () => {
       const unknown = await target.send("play", {
         spec: { hz: 1980, pulse: true, unknownPid: true },
       });
@@ -350,14 +380,14 @@ stream.properties = { node.always-process = true adapter.auto-port-config = { mo
       await excluded.expectTones([1760], [660, 880, 1980]);
       await target.send("stop", { id: unknown.id });
     });
-    await t.test("retains known descendants when their parent exits", async () => {
+    await step("retains known descendants when their parent exits", async () => {
       const { pids } = await target.send("orphan");
       orphanPids.push(...pids);
       await delay(1100);
       await selected.expectTones([660, 880], [1760]);
       await excluded.expectTones([1760], [660, 880]);
     });
-    await t.test("reconnects after the PipeWire server restarts", async () => {
+    await step("reconnects after the PipeWire server restarts", async () => {
       await stop(daemon);
       await waitFor(
         () => !existsSync(join(directory, "loopback-test")),
@@ -368,7 +398,7 @@ stream.properties = { node.always-process = true adapter.auto-port-config = { mo
       await outsider.send("play", { spec: { hz: 1320 } });
       await excluded.expectTones([1320], [660, 880]);
     });
-    await t.test("can stop and restart an instance", async () => {
+    await step("can stop and restart an instance", async () => {
       excluded.capture.stop();
       excluded.capture.stop();
       excluded.capture.start(outsider.pid, excluded.onData);

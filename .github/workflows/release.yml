@@ -45,7 +45,10 @@ jobs:
 
       - name: Check Linux audio capture
         if: runner.os == 'Linux'
-        run: pnpm run test:linux
+        run: |
+          pipewire --version
+          pw-cat --version
+          pnpm run test:linux
 
       - name: Check Windows capture API validation
         if: runner.os == 'Windows'
