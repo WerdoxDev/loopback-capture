@@ -66,6 +66,12 @@ class Recording {
     assert.equal(chunk.length % 4, 0, "whole stereo PCM16 frames");
     this.chunks.push(chunk);
   };
+  async expectNoAudio() {
+    this.chunks = [];
+    await delay(750);
+    assert.equal(this.chunks.length, 0, "silent capture must not deliver audio callbacks");
+    assert.equal(this.capture.lastError, null);
+  }
   async sample() {
     this.chunks = [];
     await waitFor(() => this.chunks.reduce((sum, chunk) => sum + chunk.length, 0) >= 48_000,
@@ -218,24 +224,28 @@ try {
     await worker.terminate();
     assert.ok(Date.now() - started < 5000, "worker capture teardown stalled");
   });
-  await t.test("preserves quiet audio below the former silence threshold", async () => {
-    const quiet = await player(880, 4);
+  await t.test("preserves quiet audio above the silence threshold", async () => {
+    const quiet = await player(880, 64);
     const selected = recording();
     selected.capture.start(quiet.pid, selected.onData);
     try {
       const samples = await selected.sample();
-      assert.ok(amplitude(samples, 880) > 0.05, "quiet audio was discarded");
+      assert.ok(amplitude(samples, 880) > 4, "quiet audio was discarded");
     } finally { selected.capture.stop(); await stopPlayer(quiet); }
   });
-  await t.test("delivers zero PCM for actively rendered silence", async () => {
-    const silent = await player(0, 0);
-    const selected = recording();
-    selected.capture.start(silent.pid, selected.onData);
-    try {
-      const samples = await selected.sample();
-      assert.ok(samples.every((byte) => byte === 0), "silent stream contains nonzero samples");
-    } finally { selected.capture.stop(); await stopPlayer(silent); }
-  });
+  for (const [name, hz, level] of [
+    ["actively rendered silence", 0, 0],
+    ["audio below the silence threshold", 880, 2],
+  ]) {
+    await t.test(`does not emit packets for ${name}`, async () => {
+      const silent = await player(hz, level);
+      const selected = recording();
+      selected.capture.start(silent.pid, selected.onData);
+      try {
+        await selected.expectNoAudio();
+      } finally { selected.capture.stop(); await stopPlayer(silent); }
+    });
+  }
   await stopPlayer(target);
   await stopPlayer(outsider);
 });

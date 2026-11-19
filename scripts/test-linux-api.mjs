@@ -65,6 +65,12 @@ class Recording {
     assert.equal(chunk.length % 4, 0, "whole stereo PCM16 frames");
     this.chunks.push(chunk);
   };
+  async expectNoAudio() {
+    this.chunks = [];
+    await delay(750);
+    assert.equal(this.chunks.length, 0, "silent capture must not deliver audio callbacks");
+    assert.equal(this.capture.lastError, null);
+  }
   async sample() {
     this.chunks = [];
     await waitFor(
@@ -315,11 +321,18 @@ test(
       await target.send("stop", { id: tone.id });
     });
     const selected = recording();
-    await step("starts before playback and emits silence", async () => {
+    await step("starts before playback without emitting silent packets", async () => {
       selected.capture.start(target.pid, selected.onData);
-      const audio = await selected.sample();
-      assert.ok(audio.every((byte) => byte === 0));
+      await selected.expectNoAudio();
       assert.throws(() => selected.capture.start(target.pid, selected.onData), /already started/);
+    });
+    await step("does not emit packets for actively rendered silence", async () => {
+      const silent = await target.send("play", { spec: { hz: 0 } });
+      try {
+        await selected.expectNoAudio();
+      } finally {
+        await target.send("stop", { id: silent.id });
+      }
     });
     let first;
     await step("mixes late grandchildren and excludes unrelated streams", async () => {

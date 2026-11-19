@@ -112,7 +112,7 @@ process.on("SIGINT", () => {
 
 The `start()` signature has changed on both platforms: replace `start(pid, true, callback)` with `start(pid, callback)`. On Windows, replace `start(pid, false, callback)` with `startSystemAudio(callback, pid)`. Linux process capture now always includes descendants; its former PID-only mode has been removed.
 
-Linux capture can start before the target plays audio. It emits silence while no matching streams are available and adds/removes streams as playback changes. Children and grandchildren discovered later are included automatically. Known descendants stay associated after reparenting; PID start times prevent unrelated processes from being admitted through PID reuse. Capture remains active until `stop()`, including after the target exits. PipeWire disconnections trigger reconnection attempts; no audio is delivered while the server is unavailable.
+Linux capture can start before the target plays audio. It delivers no audio while no matching streams are available and adds/removes streams as playback changes. Children and grandchildren discovered later are included automatically. Known descendants stay associated after reparenting; PID start times prevent unrelated processes from being admitted through PID reuse. Capture remains active until `stop()`, including after the target exits. PipeWire disconnections trigger reconnection attempts; no audio is delivered while the server is unavailable.
 
 ## Implementation
 

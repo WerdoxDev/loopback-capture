@@ -534,10 +534,10 @@ mod tests {
     }
 
     #[test]
-    fn silent_null_packet_produces_full_length_zeroes() {
+    fn silent_null_packet_is_identified_and_released_without_reading_samples() {
         let (client, releases) = fake(Vec::new(), true, true, false, false);
         let packet = Packet::read(&client).unwrap();
-        assert_eq!(packet.bytes().unwrap(), vec![0; 8]);
+        assert!(packet.is_silent());
         packet.release().unwrap();
         assert_eq!(releases.load(Ordering::SeqCst), 1);
     }
