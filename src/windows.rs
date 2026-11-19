@@ -276,7 +276,9 @@ fn wait_for_activation(
 
 fn is_silent_i16(bytes: &[u8], threshold: i16) -> bool {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .all(|c| i16::from_le_bytes([c[0], c[1]]).saturating_abs() <= threshold)
 }
 
