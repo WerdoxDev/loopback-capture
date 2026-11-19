@@ -236,3 +236,9 @@ FakesAssemblies/
 # Custom ignores
 gallery.xml
 project.lock.json
+
+# Rust build output
+/target/
+
+# Local Syncthing folder marker
+/.stfolder/

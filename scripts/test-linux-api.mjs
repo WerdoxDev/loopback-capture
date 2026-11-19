@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
 
 const require = createRequire(import.meta.url);
 const config = `
@@ -245,6 +246,74 @@ test(
         /pw-cat exited with code 2: unsupported playback option/,
       );
     });
+    await step("captures a sink monitor without disturbing existing playback links", async () => {
+      const tone = await target.send("play", { spec: { hz: 550 } });
+      const system = recording();
+      system.capture.startSystemAudio(system.onData);
+      assert.equal(system.capture.lastError, null);
+
+      // The private server has no session manager. Establish the routes that
+      // WirePlumber would normally create, using only this test's null sink.
+      let playback, monitor, configuredCapture;
+      await waitFor(() => {
+        const graph = JSON.parse(execFileSync("pw-dump", { env, encoding: "utf8" }));
+        const node = (name) =>
+          graph.find(
+            (object) => object.type.endsWith(":Node") && object.info.props["node.name"] === name,
+          )?.id;
+        const playerId = node(`tone-${tone.helperPid}`);
+        const sinkId = node("test-output");
+        const captureId = node("loopback-capture");
+        if (captureId !== undefined && configuredCapture !== captureId) {
+          execFileSync(
+            "pw-cli",
+            [
+              "set-param",
+              String(captureId),
+              "PortConfig",
+              "{ direction = Input mode = dsp monitor = false format = { mediaType = audio mediaSubtype = raw format = F32P channels = 2 position = [ FL FR ] } }",
+            ],
+            { env, stdio: "ignore" },
+          );
+          configuredCapture = captureId;
+        }
+        const port = (nodeId, direction, channel) =>
+          graph.find(
+            (object) =>
+              object.type.endsWith(":Port") &&
+              Number(object.info.props["node.id"]) === nodeId &&
+              object.info.props["port.direction"] === direction &&
+              object.info.props["audio.channel"] === channel,
+          )?.id;
+        playback = ["FL", "FR"].map((channel) => [
+          port(playerId, "out", channel),
+          port(sinkId, "in", channel),
+        ]);
+        monitor = ["FL", "FR"].map((channel) => [
+          port(sinkId, "out", channel),
+          port(captureId, "in", channel),
+        ]);
+        return [...playback, ...monitor].flat().every((id) => id !== undefined);
+      }, "private sink monitor ports were not created");
+      for (const [output, input] of [...playback, ...monitor]) {
+        execFileSync("pw-link", [String(output), String(input)], { env, stdio: "ignore" });
+      }
+      await system.expectTones([550]);
+      system.capture.stop();
+      const graph = JSON.parse(execFileSync("pw-dump", { env, encoding: "utf8" }));
+      for (const [output, input] of playback) {
+        assert.ok(
+          graph.some(
+            (object) =>
+              object.type.endsWith(":Link") &&
+              Number(object.info.props["link.output.port"]) === output &&
+              Number(object.info.props["link.input.port"]) === input,
+          ),
+          "normal playback link was preserved",
+        );
+      }
+      await target.send("stop", { id: tone.id });
+    });
     const selected = recording();
     await step("starts before playback and emits silence", async () => {
       selected.capture.start(target.pid, selected.onData);
@@ -258,6 +327,126 @@ test(
       await target.send("play", { spec: { hz: 880 } });
       await outsider.send("play", { spec: { hz: 1760 } });
       await selected.expectTones([440, 880], [1760]);
+    });
+    await step("can stop immediately without delivering queued callbacks", async () => {
+      const { capture } = recording();
+      let calls = 0;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        capture.start(target.pid, () => calls++);
+        capture.stop();
+        capture.stop();
+      }
+      await delay(100);
+      assert.equal(calls, 0);
+    });
+    await step("can stop and restart inside a callback without stale delivery", async () => {
+      const { capture } = recording();
+      let oldCalls = 0,
+        newCalls = 0;
+      capture.start(target.pid, () => {
+        oldCalls++;
+        capture.stop();
+        capture.start(target.pid, () => {
+          newCalls++;
+          capture.stop();
+        });
+      });
+      await waitFor(() => newCalls > 0, "capture did not restart inside its callback");
+      await delay(100);
+      assert.equal(oldCalls, 1);
+      assert.equal(newCalls, 1);
+    });
+    await step("stops cleanly after the JavaScript consumer falls behind", async () => {
+      const { capture } = recording();
+      let calls = 0,
+        stopped = false;
+      capture.start(target.pid, () => {
+        if (calls++ === 0) {
+          const until = performance.now() + 700;
+          while (performance.now() < until) {
+            /* Fill the bounded native queue. */
+          }
+        } else {
+          capture.stop();
+          stopped = true;
+        }
+      });
+      await waitFor(() => stopped, "capture did not stop after a slow callback");
+      await delay(100);
+      assert.equal(calls, 2, "queued callbacks must be discarded after stop");
+    });
+    await step("terminates a Node Worker with active native capture", async () => {
+      const worker = new Worker(
+        `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const { LoopbackCapture } = require(workerData.addon);
+        const capture = new LoopbackCapture();
+        capture.start(workerData.pid, () => {});
+        parentPort.postMessage("ready");
+      `,
+        {
+          eval: true,
+          workerData: {
+            addon: require.resolve("../build/Release/loopback_capture_addon.node"),
+            pid: target.pid,
+          },
+        },
+      );
+      try {
+        await Promise.race([
+          once(worker, "message"),
+          delay(3000).then(() => {
+            throw new Error("Worker capture startup timed out");
+          }),
+        ]);
+        await Promise.race([
+          worker.terminate(),
+          delay(3000).then(() => {
+            throw new Error("Worker capture cleanup timed out");
+          }),
+        ]);
+      } finally {
+        await worker.terminate();
+      }
+    });
+    await step("forwards a throwing audio callback and permits clean shutdown", async () => {
+      // Isolate uncaughtException handling from node:test's own global handler.
+      const worker = new Worker(
+        `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const { LoopbackCapture } = require(workerData.addon);
+        const capture = new LoopbackCapture();
+        process.once("uncaughtException", (error) => {
+          if (error.message !== "expected audio callback failure") throw error;
+          capture.stop();
+          parentPort.postMessage("handled callback failure");
+          parentPort.close();
+        });
+        capture.start(workerData.pid, () => {
+          throw new Error("expected audio callback failure");
+        });
+      `,
+        {
+          eval: true,
+          workerData: {
+            addon: require.resolve("../build/Release/loopback_capture_addon.node"),
+            pid: target.pid,
+          },
+        },
+      );
+      try {
+        const completed = Promise.all([once(worker, "message"), once(worker, "exit")]);
+        const [[message], [exitCode]] = await Promise.race([
+          completed,
+          delay(3000).then(() => {
+            throw new Error("throwing callback cleanup timed out");
+          }),
+        ]);
+        assert.equal(message, "handled callback failure");
+        assert.equal(exitCode, 0);
+      } finally {
+        await worker.terminate();
+      }
     });
     await step("removes closed streams and picks up replacements", async () => {
       await target.send("stop", { id: first.id });
@@ -394,9 +583,15 @@ stream.properties = { node.always-process = true adapter.auto-port-config = { mo
         "server socket was not removed",
       );
       await delay(1250); // Exercise failed reconnect attempts while the server is unavailable.
+      assert.equal(
+        excluded.capture.lastError,
+        null,
+        "recoverable disconnection is not a terminal failure",
+      );
       await startDaemon();
       await outsider.send("play", { spec: { hz: 1320 } });
       await excluded.expectTones([1320], [660, 880]);
+      assert.equal(excluded.capture.lastError, null);
     });
     await step("can stop and restart an instance", async () => {
       excluded.capture.stop();

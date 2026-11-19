@@ -2,6 +2,8 @@ import binding from "bindings";
 import { arch, platform } from "node:os";
 
 export type LoopbackCapture = {
+  /** Terminal native capture failure, or null while idle/healthy. Read before stop(), which clears the session. */
+  readonly lastError: string | null;
   /** Capture a process and all its descendants, including streams created after capture starts. Linux ownership detection is best effort. */
   start(processId: number, callback: (chunk: Buffer) => void): void;
   stop: () => void;

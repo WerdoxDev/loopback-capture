@@ -1,0 +1,19 @@
+// Source sync only. Install dependencies and build independently on each machine.
+/.git
+/node_modules
+/target
+/build
+/prebuilds
+/dist
+/.cache
+/.pnpm-store
+/.bun
+/.vs
+/.idea
+/.vscode
+*.node
+*.log
+*.tgz
+*.tsbuildinfo
+.env
+.env*

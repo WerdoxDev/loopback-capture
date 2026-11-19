@@ -63,4 +63,21 @@ test("Windows capture API validation", { skip: process.platform !== "win32" }, a
     assert.throws(() => capture.start(0, onData), RangeError);
     capture.stop();
   });
+  await t.test("reports no error before capture and tolerates repeated stop", () => {
+    const capture = new LoopbackCapture();
+    assert.equal(capture.lastError, null);
+    assert.equal(capture.stop(), undefined);
+    assert.equal(capture.stop(), undefined);
+    assert.equal(capture.lastError, null);
+  });
+
+  await t.test("rejects methods and getters called with an invalid receiver", () => {
+    const prototype = LoopbackCapture.prototype;
+    assert.throws(() => prototype.start.call({}, 1234, onData));
+    assert.throws(() => prototype.startSystemAudio.call({}, onData));
+    assert.throws(() => prototype.stop.call({}));
+    const getter = Object.getOwnPropertyDescriptor(prototype, "lastError").get;
+    assert.throws(() => getter.call({}));
+  });
+
 });
