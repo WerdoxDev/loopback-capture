@@ -30,11 +30,11 @@ fn copy_properties(props: &spa::utils::dict::DictRef) -> Properties {
         .collect()
 }
 
-const SPA_CHUNK_FLAG_EMPTY: i32 = 1 << 1;
-
 fn is_silent_i16(bytes: &[u8], threshold: i16) -> bool {
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .all(|c| i16::from_ne_bytes([c[0], c[1]]).saturating_abs() <= threshold)
 }
 
